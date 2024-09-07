@@ -9,7 +9,7 @@ client = ClobClient(
 def get_all_markets(client):
     data = []
     next_cursor = ""
-    f = open("markets.txt","w",encoding="utf-8")
+    f = open("markets2.txt","w",encoding="utf-8")
     while True:
         time.sleep(1)
         resp = client.get_sampling_markets(next_cursor=next_cursor)  
