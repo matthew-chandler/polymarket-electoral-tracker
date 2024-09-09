@@ -20,6 +20,16 @@
     "tslib": "^2.7.0"
   },
   "devDependencies": {
+    "tsx": "^4.19.0",
     "typescript": "^5.5.4"
+  },
+  "type": "module",
+  "compilerOptions": {
+    "target": "es2017",
+    "module": "esnext",
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true
   }
 }

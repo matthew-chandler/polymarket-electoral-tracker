@@ -1,57 +1,146 @@
-const { ClobClient } = require("@polymarket/clob-client");
-const fs = require('fs');
+import { ClobClient } from "@polymarket/clob-client";
+import sqlite3 from 'sqlite3';
+import { Database } from 'sqlite3';
 
-// Initialization of a client that trades directly from an EOA
-const host = "https://clob.polymarket.com";
-const clobClient = new ClobClient(host);
+const allStates : string[] = ["1st-maine","2nd-maine","1st-nebraska","2nd-nebraska","3rd-nebraska","alabama","alaska","arizona","arkansas","california","colorado","connecticut","delaware","florida","georgia","hawaii","idaho","illinois","indiana","iowa","kansas","kentucky","louisiana","maine","maryland","massachusetts","michigan","minnesota","mississippi","missouri","montana","nebraska","nevada","new-hampshire","new-jersey","new-mexico","new-york","north-carolina","north-dakota","ohio","oklahoma","oregon","pennsylvania","rhode-island","south-carolina","south-dakota","tennessee","texas","utah","vermont","virginia","washington","washington-dc","west-virginia","wisconsin","wyoming"];
+const electoralVotes: {[state : string] : number} = {"1st-maine" : 1, "2nd-maine" : 1, "1st-nebraska" : 1, "2nd-nebraska" : 1, "3rd-nebraska" : 1, "alabama": 9, "alaska": 3, "arizona": 11, "arkansas": 6, "california": 54, "colorado": 10, "connecticut": 7, "delaware": 3, "washington-dc": 3, "florida": 30, "georgia": 16, "hawaii": 4, "idaho": 4, "illinois": 19, "indiana": 11, "iowa": 6, "kansas": 6, "kentucky": 8, "louisiana": 8, "maine": 2, "maryland": 10, "massachusetts": 11, "michigan": 15, "minnesota": 10, "mississippi": 6, "missouri": 10, "montana": 4, "nebraska": 2, "nevada": 6, "new-hampshire": 4, "new-jersey": 14, "new-mexico": 5, "new-york": 28, "north-carolina": 16, "north-dakota": 3, "ohio": 17, "oklahoma": 7, "oregon": 8, "pennsylvania": 19, "rhode-island": 4, "south-carolina": 9, "south-dakota": 3, "tennessee": 11, "texas": 40, "utah": 6, "vermont": 3, "virginia": 13, "washington": 12, "west-virginia": 4, "wisconsin": 10, "wyoming": 3};
 
-async function get_all_markets(client) {
-    let data = [];
+const mainPattern = /will-a-[a-z-]+-win-[a-z-]+-presidential-election/;
+const alternatePattern = /will-a-[a-z]+-win-[a-z-]+-in-the-2024-us-presidential-election/;
+const dividedPattern = /congressional-district-[a-zA-Z0-9]+-(nebraska|maine)-will-a-[a-zA-Z-]+-win/
+
+const POLYMARKET_HOST = "https://clob.polymarket.com";
+const POLYGON_CHAINID = 137;
+
+// create polymarket clob client
+const clobClient : ClobClient = new ClobClient(POLYMARKET_HOST,POLYGON_CHAINID);
+
+interface Row {
+    state: string;
+    votes: number;
+    democrat: number;
+    republican: number;
+    other: number;
+}
+
+// Helper function to promisify db.run
+function runAsync(db: Database, sql: string, params: any[] = []): Promise<void> {
+    return new Promise((resolve, reject) => {
+        db.run(sql, params, (err) => {
+            if (err) {
+                reject(err);
+            } else {
+                resolve();
+            }
+        });
+    });
+}
+
+async function compileTokenIDs(client : ClobClient, db : Database, verbose : boolean = true) {
     let next_cursor = "";
-    var stream = fs.createWriteStream("append.txt", {flags:'a'});
-    // await fs.writeFile('markets.txt', '', err => { if (err) { console.error(err); } }); // clear file
     while (true) {
-        // get markets
-        
-        console.log("cursor " + next_cursor)
+        if (verbose === true)
+            console.log("cursor: " + next_cursor)
+
         const response = await client.getMarkets(next_cursor);
-        // parse data
-        for (let x of response.data) {
-            // console.log(x)
-            stream.write(JSON.stringify(x) + '\n');
-            // await fs.appendFile('markets.txt', JSON.stringify(x), err => {
-            //     if (err) {
-            //       console.error(err);
-            //     } else {
-            //       // file written successfully
-            //     }
-            //   });
+        for (const market of response.data) {
+            if ([mainPattern,alternatePattern,dividedPattern].some(p => p.test(market.market_slug))) {
+                if (verbose === true)
+                    console.log("found " + market.market_slug);
+
+                // determine parameters
+                const token_id : string = market.tokens[0].token_id;
+                const foundStates: string[] = allStates.filter(name => market.market_slug.includes(name));
+                const state = foundStates.reduce((acc, curr) => acc.length > curr.length ? acc : curr);
+                let party : string = ["democrat","republican"].find(p => market.market_slug.includes(p)) ?? "other";
+                
+                let sql = `UPDATE States
+                            SET ${party} = ?
+                            WHERE state = ?`;
+                await runAsync(db, sql, [token_id, state]);
+            } 
         }
         next_cursor = response.next_cursor;
-        console.log(next_cursor);
         if (next_cursor === 'LTE=') {
             break;
         }
     }
-    stream.end();
-    return data;
+
+    // manual entry for republicans winning washington, which had a typo in the market-slug
+    let sql = `UPDATE States
+                SET republican = '94235946906178658512456575183052971380329766947917734276009677699582786499833'
+                WHERE state = 'washington'`;
+    await runAsync(db, sql);
+
+    console.log("Finished adding token IDs");
 }
 
+// setup database for state info if not setup already
+const statesDb : Database = new sqlite3.Database('./markets.db',sqlite3.OPEN_READWRITE, (err) => {
+    if (err) {
+        return console.error(err.message);
+    }
+    console.log('Connected to the states database.');
+});
 
-// async function fetchData() {
-//     try {
-//         const response = await fetch("https://clob.polymarket.com/markets");
-//         if (!response.ok) {
-//             throw new Error("Network response was not ok");
-//         }
-//         const data = await response.json(); // or response.text() if you're expecting text
-//         console.log(data); // Log the actual data from the response
-//     } catch (error) {
-//         console.error("There was a problem with the fetch operation:", error);
-//     }
-// }
+async function setupStatesDb(db : Database, verbose : boolean = true) {
+    let sql : string;
 
-get_all_markets(clobClient);
+    // drop table if it already exists
+    sql = `DROP TABLE IF EXISTS States`;
+    await runAsync(db, sql);
+    console.log('Table dropped');
+
+    // create table
+    sql = `CREATE TABLE States (state, votes, democrat, republican, other)`;
+    await runAsync(db, sql);
+    console.log('Table created');
+
+    // insert initial state and vote info
+    for (const state in electoralVotes) {
+        const sql : string = `INSERT INTO States (state, votes, democrat, republican, other) VALUES (?, ?, ?, ?, ?)`;
+        await runAsync(db, sql, [state, electoralVotes[state], 0, 0, 0]);
+        if (verbose === true)
+            console.log(`Initial info inserted for ${state}`);
+    }
+
+    // verify elecoral vote data
+    await new Promise<void>((resolve, reject) => {
+        db.all(`SELECT * FROM States`, [], (err, rows : Row[]) => {
+            if (err) {
+                reject(err);
+            }
+            let sum : number = 0;
+            rows.forEach((row : Row) => {
+                sum += row.votes;
+            });
+            console.log(`Total electoral votes: ${sum}`);
+            if (sum === 538) {
+                console.log("Total electoral votes correct");
+            } else {
+                console.log("Total electoral votes not correct");
+            }
+            resolve();
+        });
+    });
+
+    compileTokenIDs(clobClient,statesDb);
+}
+
+async function main() {
+    await setupStatesDb(statesDb);
+    
+};
+
+main();
+
+// count total votes
+let sum : number = 0;
+for (const x in electoralVotes) {
+    sum += electoralVotes[x];
+}
+console.log(sum)
+
 
 
 /*
@@ -60,7 +149,29 @@ token IDs:
 democrat win: 11015470973684177829729219287262166995141465048508201953575582100565462316088
 republican win: 65444287174436666395099524416802980027579283433860283898747701594488689243696
 
+oregon:
+"market_slug":"will-a-democrat-win-oregon-in-the-2024-us-presidential-election"
+"market_slug":"will-a-republican-win-oregon-in-the-2024-us-presidential-election"
+"market_slug":"will-a-candidate-from-another-party-win-oregon-presidential-election"
 
+"congressional-district-2nd-nebraska-will-a-democrat-win"
+
+{"enable_order_book":false,"active":false,"closed":false,"archived":false,"accepting_orders":false,"accepting_order_timestamp":null,"minimum_order_size":5,"minimum_tick_size":0.01,"condition_id":"","question_id":"","question":"Initia airdrop by April 30?","description":"This market will resolve to \"Yes\" if Initia launches a token and announces they have performed an airdrop between March 27 and April 30, 2024, 11:59 PM ET. Otherwise, this market will resolve to \"No\".\n\nFor the purposes of this market \"locked\" tokens or non-swappable tokens will not suffice to resolve this market to \"Yes\".\n\nThe primary resolution source for this market is on-chain information and official information from the Initia team (https://initia.xyz/), however a consensus of credible reporting will also be used.","market_slug":"initia-airdrop-by-april-30","end_date_iso":null,"game_start_time":null,"seconds_delay":0,"fpmm":"","maker_base_fee":0,"taker_base_fee":0,"notifications_enabled":true,"neg_risk":false,"neg_risk_market_id":"","neg_risk_request_id":"","icon":"https://polymarket-upload.s3.us-east-2.amazonaws.com/initia-airdrop-by-april-30-f772af1e-65d8-41e8-9d78-84102f9f3c1e.png","image":"https://polymarket-upload.s3.us-east-2.amazonaws.com/initia-airdrop-by-april-30-f772af1e-65d8-41e8-9d78-84102f9f3c1e.png","rewards":{"rates":null,"min_size":0,"max_spread":0},"is_50_50_outcome":false,"tokens":[{"token_id":"","outcome":"","price":0,"winner":false},{"token_id":"","outcome":"","price":0,"winner":false}],"tags":["All"]}
+{"enable_order_book":true,"active":true,"closed":false,"archived":false,"accepting_orders":true,"accepting_order_timestamp":null,"minimum_order_size":5,"minimum_tick_size":0.01,"condition_id":"0x10223aa80307fa55f3e1d078f33fa42785d3082a7dfd47b64986efdbb4834231","question_id":"0xd8775959c48816a2964aed501ccff4791812aff587ae66602cf76cec90afa400","question":"Will a Democrat win Nebraska's 2nd congressional district?","description":"This market will resolve to \"Yes\" if a Democratic candidate wins the popular vote in Nebraska's 2nd congressional district (NE-2) in the 2024 US presidential election. Otherwise, this market will resolve to \"No\".\n\nA candidate shall be considered to represent a party in the event that he or she is the nominee, or has a ballot-listed or otherwise identifiable party preference, of the party in question.\n\nThe resolution source for this market is the Associated Press, Fox News, and NBC. This market will resolve once all three sources call the race for the same candidate. If all three sources haven’t called the race in this state for the same candidate, this market will resolve based on the official certification.","market_slug":"congressional-district-2nd-nebraska-will-a-democrat-win","end_date_iso":"2024-11-05T00:00:00Z","game_start_time":null,"seconds_delay":0,"fpmm":"","maker_base_fee":0,"taker_base_fee":0,"notifications_enabled":true,"neg_risk":true,"neg_risk_market_id":"0xd8775959c48816a2964aed501ccff4791812aff587ae66602cf76cec90afa400","neg_risk_request_id":"0x2165544228e87f2346fade134afd8e009d9b1a966929b913ca30eee74ebbfdbd","icon":"https://polymarket-upload.s3.us-east-2.amazonaws.com/democrat+logo.png","image":"https://polymarket-upload.s3.us-east-2.amazonaws.com/democrat+logo.png","rewards":{"rates":[{"asset_address":"0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174","rewards_daily_rate":15}],"min_size":200,"max_spread":3.5},"is_50_50_outcome":false,"tokens":[{"token_id":"100720034857136207049856256259513075630892697630830805870400447581813554744362","outcome":"Yes","price":0.815,"winner":false},{"token_id":"80863397909563738922261584828044376268127147996620067562378722769479358304382","outcome":"No","price":0.185,"winner":false}],"tags":["Politics","US Election","State Presidential Election","All","NE-2","NE2"]}
+{"enable_order_book":true,"active":true,"closed":false,"archived":false,"accepting_orders":true,"accepting_order_timestamp":null,"minimum_order_size":5,"minimum_tick_size":0.001,"condition_id":"0x4430403d54a2a79a2b3043294f943a4f2717dff024629cf4a3e73f0151fa0df5","question_id":"0xd8775959c48816a2964aed501ccff4791812aff587ae66602cf76cec90afa401","question":"Will a Republican win Nebraska's 2nd congressional district?","description":"This market will resolve to \"Yes\" if a Republican candidate wins the popular vote in Nebraska's 2nd congressional district in the 2024 US presidential election. Otherwise, this market will resolve to \"No\".\n\nA candidate shall be considered to represent a party in the event that he or she is the nominee, or has a ballot-listed or otherwise identifiable party preference, of the party in question.\n\nThe resolution source for this market is the Associated Press, Fox News, and NBC. This market will resolve once all three sources call the race for the same candidate. If all three sources haven’t called the race in this state for the same candidate, this market will resolve based on the official certification.","market_slug":"congressional-district-2nd-nebraska-will-a-republican-win","end_date_iso":"2024-11-05T00:00:00Z","game_start_time":null,"seconds_delay":0,"fpmm":"","maker_base_fee":0,"taker_base_fee":0,"notifications_enabled":true,"neg_risk":true,"neg_risk_market_id":"0xd8775959c48816a2964aed501ccff4791812aff587ae66602cf76cec90afa400","neg_risk_request_id":"0x3f1a949aa15a3361f7c10f3ff459d25b0dd8e950c099c1d97af9d78638ac9568","icon":"https://polymarket-upload.s3.us-east-2.amazonaws.com/goplogo1.png","image":"https://polymarket-upload.s3.us-east-2.amazonaws.com/goplogo1.png","rewards":{"rates":[{"asset_address":"0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174","rewards_daily_rate":15}],"min_size":200,"max_spread":3.5},"is_50_50_outcome":false,"tokens":[{"token_id":"89935828926691594744835894208229135375117246058109787048758748507442022267421","outcome":"Yes","price":0.184,"winner":false},{"token_id":"73016602351549806570154178056127526088291646024319219227321763809599562817674","outcome":"No","price":0.816,"winner":false}],"tags":["Politics","US Election","State Presidential Election","All","NE-2","NE2"]}
+{"enable_order_book":true,"active":true,"closed":false,"archived":false,"accepting_orders":true,"accepting_order_timestamp":null,"minimum_order_size":5,"minimum_tick_size":0.001,"condition_id":"0x70533a0b0b3dc473e897553ab369ec00aab1742a5c183561de6790db5cd4de6b","question_id":"0xd8775959c48816a2964aed501ccff4791812aff587ae66602cf76cec90afa402","question":"Will a candidate from another party win Nebraska's 2nd congressional district?","description":"This market will resolve to \"Yes\" if a candidate from neither the Democratic nor Republican parties wins the popular vote in Nebraska's 2nd congressional district in the 2024 US presidential election. Otherwise, this market will resolve to \"No\".\n\nA candidate shall be considered to represent a party in the event that he or she is the nominee, or has a ballot-listed or otherwise identifiable party preference, of the party in question.\n\nThe resolution source for this market is the Associated Press, Fox News, and NBC. This market will resolve once all three sources call the race for the same candidate. If all three sources haven’t called the race in this state for the same candidate, this market will resolve based on the official certification.","market_slug":"congressional-district-2nd-nebraska-will-a-candidate-from-another-party-win","end_date_iso":"2024-11-05T00:00:00Z","game_start_time":null,"seconds_delay":0,"fpmm":"","maker_base_fee":0,"taker_base_fee":0,"notifications_enabled":true,"neg_risk":true,"neg_risk_market_id":"0xd8775959c48816a2964aed501ccff4791812aff587ae66602cf76cec90afa400","neg_risk_request_id":"0x9930ebbba46caf80b78fdc21caefde6794d309e6001b9bf6fbd1c896a092ed8a","icon":"https://polymarket-upload.s3.us-east-2.amazonaws.com/flag+nebraska.png","image":"https://polymarket-upload.s3.us-east-2.amazonaws.com/flag+nebraska.png","rewards":{"rates":[{"asset_address":"0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174","rewards_daily_rate":5}],"min_size":200,"max_spread":3.5},"is_50_50_outcome":false,"tokens":[{"token_id":"108033757963777081157394417069391889572101578402022503466301306097808465933765","outcome":"Yes","price":0.0015,"winner":false},{"token_id":"19048144613260911692647604206831445317453171272309720270100178258123620303810","outcome":"No","price":0.9985,"winner":false}],"tags":["Politics","US Election","State Presidential Election","All","NE-2","NE2"]}
+{"enable_order_book":true,"active":true,"closed":false,"archived":false,"accepting_orders":true,"accepting_order_timestamp":null,"minimum_order_size":5,"minimum_tick_size":0.001,"condition_id":"0xbff3fbf86c2606ba40dd4afbc1210bbb9ce973afffde7a852dbee1d27ee634ca","question_id":"0x08e7fd0b891cbeefb9daf8e23aded2cce0c2994b569299329b8ca1215075ed00","question":"Will a Democrat win Nebraska's 3rd congressional district?","description":"This market will resolve to \"Yes\" if a Democratic candidate wins the popular vote in Nebraska's 3rd congressional district (NE-3) in the 2024 US presidential election. Otherwise, this market will resolve to \"No\".\n\nA candidate shall be considered to represent a party in the event that he or she is the nominee, or has a ballot-listed or otherwise identifiable party preference, of the party in question.\n\nThe resolution source for this market is the Associated Press, Fox News, and NBC. This market will resolve once all three sources call the race for the same candidate. If all three sources haven’t called the race in this state for the same candidate, this market will resolve based on the official certificatio","market_slug":"congressional-district-3rd-nebraska-will-a-democrat-win","end_date_iso":"2024-11-05T00:00:00Z","game_start_time":null,"seconds_delay":0,"fpmm":"","maker_base_fee":0,"taker_base_fee":0,"notifications_enabled":true,"neg_risk":true,"neg_risk_market_id":"0x08e7fd0b891cbeefb9daf8e23aded2cce0c2994b569299329b8ca1215075ed00","neg_risk_request_id":"0xd458a1e3dc72c5cca618843ceae3ef5d0b56225f721241f3ea57f0c5a7d8d9cf","icon":"https://polymarket-upload.s3.us-east-2.amazonaws.com/democrat+logo.png","image":"https://polymarket-upload.s3.us-east-2.amazonaws.com/democrat+logo.png","rewards":{"rates":[{"asset_address":"0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174","rewards_daily_rate":5}],"min_size":200,"max_spread":3.5},"is_50_50_outcome":false,"tokens":[{"token_id":"112524283395741209298480799212294273986312625766289655134883390843045198227862","outcome":"Yes","price":0.0185,"winner":false},{"token_id":"53583373625194137312552614694825573687914553611563390625439787868664334382785","outcome":"No","price":0.9815,"winner":false}],"tags":["Politics","US Election","State Presidential Election","All","NE-3","NE3"]}
+{"enable_order_book":true,"active":true,"closed":false,"archived":false,"accepting_orders":true,"accepting_order_timestamp":null,"minimum_order_size":5,"minimum_tick_size":0.001,"condition_id":"0xb156f975ef4e42fc1c32bb838098adcb91fd88f4cd6be2004b95ad53540a7bb7","question_id":"0x08e7fd0b891cbeefb9daf8e23aded2cce0c2994b569299329b8ca1215075ed01","question":"Will a Republican win Nebraska's 3rd congressional district?","description":"This market will resolve to \"Yes\" if a Republican candidate wins the popular vote in Nebraska 3rd congressional district in the 2024 US presidential election. Otherwise, this market will resolve to \"No\".\n\nA candidate shall be considered to represent a party in the event that he or she is the nominee, or has a ballot-listed or otherwise identifiable party preference, of the party in question.\n\nThe resolution source for this market is the Associated Press, Fox News, and NBC. This market will resolve once all three sources call the race for the same candidate. If all three sources haven’t called the race in this state for the same candidate, this market will resolve based on the official certification.","market_slug":"congressional-district-3rd-nebraska-will-a-republican-win","end_date_iso":"2024-11-05T00:00:00Z","game_start_time":null,"seconds_delay":0,"fpmm":"","maker_base_fee":0,"taker_base_fee":0,"notifications_enabled":true,"neg_risk":true,"neg_risk_market_id":"0x08e7fd0b891cbeefb9daf8e23aded2cce0c2994b569299329b8ca1215075ed00","neg_risk_request_id":"0xc0a7c608d6bcc6dee9f58db42cc7081e7a9d33d59db23f772cd332173fc47a6b","icon":"https://polymarket-upload.s3.us-east-2.amazonaws.com/goplogo1.png","image":"https://polymarket-upload.s3.us-east-2.amazonaws.com/goplogo1.png","rewards":{"rates":[{"asset_address":"0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174","rewards_daily_rate":5}],"min_size":200,"max_spread":3.5},"is_50_50_outcome":false,"tokens":[{"token_id":"85344148035718031760666722635224950639783692208665075430713212828617903575435","outcome":"Yes","price":0.974,"winner":false},{"token_id":"68775581304832608960386127595503203595430632702715506931460367184896010660304","outcome":"No","price":0.026,"winner":false}],"tags":["Politics","US Election","State Presidential Election","All","NE-3","NE3"]}
+{"enable_order_book":true,"active":true,"closed":false,"archived":false,"accepting_orders":true,"accepting_order_timestamp":null,"minimum_order_size":5,"minimum_tick_size":0.001,"condition_id":"0x079198b7870967b849aa4ac928a6335239636893156752603ccefcf968608eb7","question_id":"0x08e7fd0b891cbeefb9daf8e23aded2cce0c2994b569299329b8ca1215075ed02","question":"Will a candidate from another party win Nebraska's 3rd congressional district?","description":"This market will resolve to \"Yes\" if a candidate from neither the Democratic nor Republican parties wins the popular vote in Nebraska 3rd congressional district in the 2024 US presidential election. Otherwise, this market will resolve to \"No\".\n\nA candidate shall be considered to represent a party in the event that he or she is the nominee, or has a ballot-listed or otherwise identifiable party preference, of the party in question.\n\nThe resolution source for this market is the Associated Press, Fox News, and NBC. This market will resolve once all three sources call the race for the same candidate. If all three sources haven’t called the race in this state for the same candidate, this market will resolve based on the official certification.","market_slug":"congressional-district-3rd-nebraska-will-a-candidate-from-another-party-win","end_date_iso":"2024-11-05T00:00:00Z","game_start_time":null,"seconds_delay":0,"fpmm":"","maker_base_fee":0,"taker_base_fee":0,"notifications_enabled":true,"neg_risk":true,"neg_risk_market_id":"0x08e7fd0b891cbeefb9daf8e23aded2cce0c2994b569299329b8ca1215075ed00","neg_risk_request_id":"0xdd9e0c32898ec61e843c529400423626a23b99b768b41e9deadcc09b5e812fc5","icon":"https://polymarket-upload.s3.us-east-2.amazonaws.com/flag+nebraska.png","image":"https://polymarket-upload.s3.us-east-2.amazonaws.com/flag+nebraska.png","rewards":{"rates":[{"asset_address":"0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174","rewards_daily_rate":2}],"min_size":200,"max_spread":3.5},"is_50_50_outcome":false,"tokens":[{"token_id":"60428809364295285975573952515572345400390918342346635494597497978137870585377","outcome":"Yes","price":0.008,"winner":false},{"token_id":"38736359326578321677412302039678308635924094223466451903037568098601254568249","outcome":"No","price":0.992,"winner":false}],"tags":["Politics","US Election","State Presidential Election","All","NE-3","NE3"]}
+{"enable_order_book":true,"active":true,"closed":false,"archived":false,"accepting_orders":true,"accepting_order_timestamp":null,"minimum_order_size":5,"minimum_tick_size":0.001,"condition_id":"0xe091e98ebfc781f2709d337babb7d66daefa35326c34eb33ac5115f34d4027d0","question_id":"0xcce79ccbf1745fcec5f02037cf6bd367b81cb31676954f90bb5d1f3698aedc00","question":"Will a Democrat win Maine's 1st congressional district?","description":"This market will resolve to \"Yes\" if a Democratic candidate wins the popular vote in Maine's 1st congressional district in the 2024 US presidential election. Otherwise, this market will resolve to \"No\".\n\nA candidate shall be considered to represent a party in the event that he or she is the nominee, or has a ballot-listed or otherwise identifiable party preference, of the party in question.\n\nThe resolution source for this market is the Associated Press, Fox News, and NBC. This market will resolve once all three sources call the race for the same candidate. If all three sources haven’t called the race in this state for the same candidate, this market will resolve based on the official certification.","market_slug":"congressional-district-1st-maine-will-a-democrat-win","end_date_iso":"2024-11-05T00:00:00Z","game_start_time":null,"seconds_delay":0,"fpmm":"","maker_base_fee":0,"taker_base_fee":0,"notifications_enabled":true,"neg_risk":true,"neg_risk_market_id":"0xcce79ccbf1745fcec5f02037cf6bd367b81cb31676954f90bb5d1f3698aedc00","neg_risk_request_id":"0x30d764565e477e8b9ff2920672cfbfedb43589d2d6fac79b63fc38ef19795582","icon":"https://polymarket-upload.s3.us-east-2.amazonaws.com/democrat+logo.png","image":"https://polymarket-upload.s3.us-east-2.amazonaws.com/democrat+logo.png","rewards":{"rates":[{"asset_address":"0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174","rewards_daily_rate":5}],"min_size":200,"max_spread":3.5},"is_50_50_outcome":false,"tokens":[{"token_id":"96903670306977341050250953455451985746388088498619409410828908179561230542029","outcome":"Yes","price":0.973,"winner":false},{"token_id":"10180077568349406496354064441923543022618471367418551462484562375383506882537","outcome":"No","price":0.027,"winner":false}],"tags":["Politics","US Election","State Presidential Election","All","ME1","ME-1"]}
+{"enable_order_book":true,"active":true,"closed":false,"archived":false,"accepting_orders":true,"accepting_order_timestamp":null,"minimum_order_size":5,"minimum_tick_size":0.001,"condition_id":"0x884fdfe1541124b457614d4d7372caebb4805f3d90e4b9387f0b6f34bea27662","question_id":"0xcce79ccbf1745fcec5f02037cf6bd367b81cb31676954f90bb5d1f3698aedc01","question":"Will a Republican win Maine's 1st congressional district?","description":"This market will resolve to \"Yes\" if a Republican candidate wins the popular vote in Maine's 1st congressional district in the 2024 US presidential election. Otherwise, this market will resolve to \"No\".\n\nA candidate shall be considered to represent a party in the event that he or she is the nominee, or has a ballot-listed or otherwise identifiable party preference, of the party in question.\n\nThe resolution source for this market is the Associated Press, Fox News, and NBC. This market will resolve once all three sources call the race for the same candidate. If all three sources haven’t called the race in this state for the same candidate, this market will resolve based on the official certification.","market_slug":"congressional-district-1st-maine-will-a-republican-win","end_date_iso":"2024-11-05T00:00:00Z","game_start_time":null,"seconds_delay":0,"fpmm":"","maker_base_fee":0,"taker_base_fee":0,"notifications_enabled":true,"neg_risk":true,"neg_risk_market_id":"0xcce79ccbf1745fcec5f02037cf6bd367b81cb31676954f90bb5d1f3698aedc00","neg_risk_request_id":"0x2dfca4ce512a2b26179e0673b9fcd2a0d11718104a1f2db4d3cf5a3772e7fbcf","icon":"https://polymarket-upload.s3.us-east-2.amazonaws.com/goplogo1.png","image":"https://polymarket-upload.s3.us-east-2.amazonaws.com/goplogo1.png","rewards":{"rates":[{"asset_address":"0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174","rewards_daily_rate":5}],"min_size":200,"max_spread":3.5},"is_50_50_outcome":false,"tokens":[{"token_id":"73813672433264014756379048542092198202128167401199831656039946855262610634520","outcome":"Yes","price":0.0205,"winner":false},{"token_id":"65907934925626075583143791359310803820850317646897433695077013790296149934069","outcome":"No","price":0.9795,"winner":false}],"tags":["Politics","US Election","State Presidential Election","All","ME1","ME-1"]}
+{"enable_order_book":true,"active":true,"closed":false,"archived":false,"accepting_orders":true,"accepting_order_timestamp":null,"minimum_order_size":5,"minimum_tick_size":0.001,"condition_id":"0x636298a285ed01f5dcb08042e6356de9003e36292b66feb341a24d2e18361fc9","question_id":"0xcce79ccbf1745fcec5f02037cf6bd367b81cb31676954f90bb5d1f3698aedc02","question":"Will a candidate from another party win Maine's 1st congressional district?","description":"This market will resolve to \"Yes\" if a candidate from neither the Democratic nor Republican parties wins the popular vote in Maine's 1st congressional district in the 2024 US presidential election. Otherwise, this market will resolve to \"No\".\n\nA candidate shall be considered to represent a party in the event that he or she is the nominee, or has a ballot-listed or otherwise identifiable party preference, of the party in question.\n\nThe resolution source for this market is the Associated Press, Fox News, and NBC. This market will resolve once all three sources call the race for the same candidate. If all three sources haven’t called the race in this state for the same candidate, this market will resolve based on the official certification.","market_slug":"congressional-district-1st-maine-will-a-candidate-from-another-party-win","end_date_iso":"2024-11-05T00:00:00Z","game_start_time":null,"seconds_delay":0,"fpmm":"","maker_base_fee":0,"taker_base_fee":0,"notifications_enabled":true,"neg_risk":true,"neg_risk_market_id":"0xcce79ccbf1745fcec5f02037cf6bd367b81cb31676954f90bb5d1f3698aedc00","neg_risk_request_id":"0x3c9303c108810f80bf28c96586c65421df22d6cf2c4b4f7a3cef284b90f3e252","icon":"https://polymarket-upload.s3.us-east-2.amazonaws.com/flag+maine.png","image":"https://polymarket-upload.s3.us-east-2.amazonaws.com/flag+maine.png","rewards":{"rates":[{"asset_address":"0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174","rewards_daily_rate":2}],"min_size":200,"max_spread":3.5},"is_50_50_outcome":false,"tokens":[{"token_id":"94150950660770976217693537961905561412876907637822663529901749179461890221256","outcome":"Yes","price":0.0035,"winner":false},{"token_id":"58146322261807336040760333786045925199755379540258501212655407500487493727771","outcome":"No","price":0.9965,"winner":false}],"tags":["Politics","US Election","State Presidential Election","All","ME1","ME-1"]}
+{"enable_order_book":true,"active":true,"closed":false,"archived":false,"accepting_orders":true,"accepting_order_timestamp":null,"minimum_order_size":5,"minimum_tick_size":0.01,"condition_id":"0xa7b4202e7b52aed7a7427e592d41618f7f8dcd66875842caf197d8e5b9f47d72","question_id":"0x742d4ab284a7101fabdc8799409d1c0a60054b5a378d575614276a16b1b8f500","question":"Will a Democrat win Maine's 2nd congressional district?","description":"This market will resolve to \"Yes\" if a Democratic candidate wins the popular vote in Maine's 2nd congressional district in the 2024 US presidential election. Otherwise, this market will resolve to \"No\".\n\nA candidate shall be considered to represent a party in the event that he or she is the nominee, or has a ballot-listed or otherwise identifiable party preference, of the party in question.\n\nThe resolution source for this market is the Associated Press, Fox News, and NBC. This market will resolve once all three sources call the race for the same candidate. If all three sources haven’t called the race in this state for the same candidate, this market will resolve based on the official certification.","market_slug":"congressional-district-2nd-maine-will-a-democrat-win","end_date_iso":"2024-11-05T00:00:00Z","game_start_time":null,"seconds_delay":0,"fpmm":"","maker_base_fee":0,"taker_base_fee":0,"notifications_enabled":true,"neg_risk":true,"neg_risk_market_id":"0x742d4ab284a7101fabdc8799409d1c0a60054b5a378d575614276a16b1b8f500","neg_risk_request_id":"0xa03f6e5759b4fc5f2dc4fff305ef77feca8cd53cfa6911de299e45350b814496","icon":"https://polymarket-upload.s3.us-east-2.amazonaws.com/democrat+logo.png","image":"https://polymarket-upload.s3.us-east-2.amazonaws.com/democrat+logo.png","rewards":{"rates":[{"asset_address":"0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174","rewards_daily_rate":5}],"min_size":200,"max_spread":3.5},"is_50_50_outcome":false,"tokens":[{"token_id":"44654349958461050053406728973079846715045626572694293369547984435775623589312","outcome":"Yes","price":0.18,"winner":false},{"token_id":"35146497898416205827043529558767688423973661575262750615714111340634784642427","outcome":"No","price":0.82,"winner":false}],"tags":["Politics","US Election","State Presidential Election","All","ME2","ME-2"]}
+
+
+"Will a Democrat win Washington DC Presidential Election?","market_slug":"will-a-democrat-win-washington-dc-presidential-election","end_date_iso":"2024-11-05T00:00:00Z","game_start_time":null,"seconds_delay":0,"fpmm":"","maker_base_fee":0,"taker_base_fee":0,"notifications_enabled":true,"neg_risk":true,"neg_risk_market_id":"0xca947d3915c7c5776626847399332cb7d82abb83c25d33713cc2edef6c4a9a00","neg_risk_request_id":"0x29572b8be09c3ce5878e42176641ce2b1d2f3ce2cd48032131d10bf8e806f281","icon":"https://polymarket-upload.s3.us-east-2.amazonaws.com/democrat+logo.png","image":"https://polymarket-upload.s3.us-east-2.amazonaws.com/democrat+logo.png","rewards":{"rates":[{"asset_address":"0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174","rewards_daily_rate":10}],"min_size":200,"max_spread":3.5},"is_50_50_outcome":false,"tokens":[{"token_id":"39865321317561321902076516779321479805506930549717479932169190005157614703767","outcome":"Yes","price":0.9825,"winner":false},{"token_id":"108657073270958020190553987015730954319605884991396469823291511151288121463959","outcome":"No","price":0.0175,"winner":false}],"tags":["Elections","u.s. election","elections 2024","State Presidential Election","All"]}
+{"enable_order_book":true,"active":true,"closed":false,"archived":false,"accepting_orders":true,"accepting_order_timestamp":null,"minimum_order_size":5,"minimum_tick_size":0.001,"condition_id":"0xd64e93679c1820390e883d346449393b72e0df2c7fef9dadd2d66d9764f949e7","question_id":"0xca947d3915c7c5776626847399332cb7d82abb83c25d33713cc2edef6c4a9a01","question":"Will a Republican win Washington DC Presidential Election?","description":"This market will resolve to \"Yes\" if a Republican candidate wins the popular vote in Washington DC in the 2024 US presidential election. Otherwise, this market will resolve to \"No\".\n\nA candidate shall be considered to represent a party in the event that he or she is the nominee, or has a ballot-listed or otherwise identifiable party preference, of the party in question.\n\nThe resolution source for this market is the Associated Press, Fox News, and NBC. This market will resolve once all three sources call the race for the same candidate. If all three sources haven’t called the race in this state for the same candidate, this market will resolve based on the official certification.","market_slug":"will-a-republican-win-washington-dc-presidential-election","end_date_iso":"2024-11-05T00:00:00Z","game_start_time":null,"seconds_delay":0,"fpmm":"","maker_base_fee":0,"taker_base_fee":0,"notifications_enabled":true,"neg_risk":true,"neg_risk_market_id":"0xca947d3915c7c5776626847399332cb7d82abb83c25d33713cc2edef6c4a9a00","neg_risk_request_id":"0xf6872cb66718daa98559387f3261a0f3bf179e34b391a811ad865963a2a1e8b7","icon":"https://polymarket-upload.s3.us-east-2.amazonaws.com/goplogo1.png","image":"https://polymarket-upload.s3.us-east-2.amazonaws.com/goplogo1.png","rewards":{"rates":[{"asset_address":"0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174","rewards_daily_rate":10}],"min_size":200,"max_spread":3.5},"is_50_50_outcome":false,"tokens":[{"token_id":"2321649089548739565575746918040720733757871342946130783596524069162273097732","outcome":"Yes","price":0.0125,"winner":false},{"token_id":"98750704223698640509441565328338845116401112301444267796918348655934954687538","outcome":"No","price":0.9875,"winner":false}],"tags":["Elections","u.s. election","elections 2024","State Presidential Election","All"]}
+{"enable_order_book":true,"active":true,"closed":false,"archived":false,"accepting_orders":true,"accepting_order_timestamp":null,"minimum_order_size":5,"minimum_tick_size":0.001,"condition_id":"0x5cd8bb97af43191779906af4e624fd87eb2a07bcdb19a22b8f0943cc20dca848","question_id":"0xca947d3915c7c5776626847399332cb7d82abb83c25d33713cc2edef6c4a9a02","question":"Will a candidate from another party win Washington DC Presidential Election?","description":"This market will resolve to \"Yes\" if a candidate from neither the Democratic nor Republican parties wins the popular vote in Washington DC in the 2024 US presidential election. Otherwise, this market will resolve to \"No\".\n\nA candidate shall be considered to represent a party in the event that he or she is the nominee, or has a ballot-listed or otherwise identifiable party preference, of the party in question.\n\nThe resolution source for this market is the Associated Press, Fox News, and NBC. This market will resolve once all three sources call the race for the same candidate. If all three sources haven’t called the race in this state for the same candidate, this market will resolve based on the official certification.","market_slug":"will-a-candidate-from-another-party-win-washington-dc-presidential-election","end_date_iso":"2024-11-05T00:00:00Z","game_start_time":null,"seconds_delay":0,"fpmm":"","maker_base_fee":0,"taker_base_fee":0,"notifications_enabled":true,"neg_risk":true,"neg_risk_market_id":"0xca947d3915c7c5776626847399332cb7d82abb83c25d33713cc2edef6c4a9a00","neg_risk_request_id":"0xf23724f7b906139d2329d2c62f5727289c0b1f5705e4826b32ef393fb03c17b5","icon":"https://polymarket-upload.s3.us-east-2.amazonaws.com/flag+washington+dc.png","image":"https://polymarket-upload.s3.us-east-2.amazonaws.com/flag+washington+dc.png","rewards":{"rates":[{"asset_address":"0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174","rewards_daily_rate":2}],"min_size":200,"max_spread":3.5},"is_50_50_outcome":false,"tokens":[{"token_id":"107574504565969687702568017374167382589144877270650558564073756576774272663678","outcome":"Yes","price":0.005,"winner":false},{"token_id":"100070464371885889010832752325170747978545708160981208830192488612599095483042","outcome":"No","price":0.995,"winner":false}],"tags":["Elections","u.s. election","elections 2024","State Presidential Election","All"]}
 
 
 */
