@@ -23,4 +23,4 @@ TestResults.xml
 .venv
 
 node_modules/
-*db
+*.db
