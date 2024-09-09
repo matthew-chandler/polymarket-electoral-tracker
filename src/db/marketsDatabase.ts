@@ -1,8 +1,8 @@
 import { ClobClient, BookParams } from "@polymarket/clob-client";
 import sqlite3 from 'sqlite3';
 import { Database } from 'sqlite3';
-import { POLYMARKET_HOST, POLYGON_CHAINID, Row, runAsync, allStates, electoralVotes } from './common';
-import { marketsDb, getAllStateInfo } from "./statesDatabase";
+import { POLYMARKET_HOST, POLYGON_CHAINID, Row, runAsync, marketsDb } from '../common';
+import { getAllStateInfo } from "./statesDatabase";
 import { get } from "http";
 
 export async function createMarketTable(db : Database, verbose : boolean = true) {

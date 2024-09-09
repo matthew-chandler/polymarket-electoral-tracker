@@ -1,4 +1,5 @@
 import { Database } from 'sqlite3';
+import sqlite3 from 'sqlite3';
 
 export const POLYMARKET_HOST = "https://clob.polymarket.com";
 export const POLYGON_CHAINID = 137;
@@ -26,3 +27,11 @@ export function runAsync(db: Database, sql: string, params: any[] = []): Promise
         });
     });
 }
+
+// setup database for state info if not setup already
+export const marketsDb : Database = new sqlite3.Database('./src/db/markets.db',sqlite3.OPEN_READWRITE, (err) => {
+    if (err) {
+        return console.error(err.message);
+    }
+    console.log('Connected to the states database.');
+});

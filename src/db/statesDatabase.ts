@@ -1,21 +1,13 @@
 import { ClobClient } from "@polymarket/clob-client";
 import sqlite3 from 'sqlite3';
 import { Database } from 'sqlite3';
-import { POLYMARKET_HOST, POLYGON_CHAINID, Row, runAsync, allStates, electoralVotes } from './common';
+import { POLYMARKET_HOST, POLYGON_CHAINID, Row, runAsync, allStates, electoralVotes, marketsDb } from '../common';
 
 const mainPattern = /will-a-[a-z-]+-win-[a-z-]+-presidential-election/;
 const alternatePattern = /will-a-[a-z]+-win-[a-z-]+-in-the-2024-us-presidential-election/;
 const dividedPattern = /congressional-district-[a-zA-Z0-9]+-(nebraska|maine)-will-a-[a-zA-Z-]+-win/
 
-// setup database for state info if not setup already
-export const marketsDb : Database = new sqlite3.Database('./src/db/markets.db',sqlite3.OPEN_READWRITE, (err) => {
-    if (err) {
-        return console.error(err.message);
-    }
-    console.log('Connected to the states database.');
-});
-
-export async function compileTokenIDs(db : Database, verbose : boolean = true) {
+export async function compileTokenIDs(verbose : boolean = true) {
     // create polymarket clob client
     const clobClient : ClobClient = new ClobClient(POLYMARKET_HOST,POLYGON_CHAINID);
             
@@ -40,7 +32,7 @@ export async function compileTokenIDs(db : Database, verbose : boolean = true) {
                 let sql = `UPDATE States
                             SET ${party} = ?
                             WHERE state = ?`;
-                await runAsync(db, sql, [token_id, state]);
+                await runAsync(marketsDb, sql, [token_id, state]);
             } 
         }
         next_cursor = response.next_cursor;
@@ -53,36 +45,36 @@ export async function compileTokenIDs(db : Database, verbose : boolean = true) {
     let sql = `UPDATE States
                 SET republican = '94235946906178658512456575183052971380329766947917734276009677699582786499833'
                 WHERE state = 'washington'`;
-    await runAsync(db, sql);
+    await runAsync(marketsDb, sql);
 
     if (verbose === true)
         console.log("Finished adding token IDs");
 }
 
-export async function setupStatesDb(db : Database, verbose : boolean = true) {
+export async function setupStatesDb(verbose : boolean = true) {
     let sql : string;
 
     // drop table if it already exists
     sql = `DROP TABLE IF EXISTS States`;
-    await runAsync(db, sql);
+    await runAsync(marketsDb, sql);
     console.log('Table dropped');
 
     // create table
     sql = `CREATE TABLE States (state, votes, democrat, republican, other)`;
-    await runAsync(db, sql);
+    await runAsync(marketsDb, sql);
     console.log('Table created');
 
     // insert initial state and vote info
     for (const state in electoralVotes) {
         const sql : string = `INSERT INTO States (state, votes, democrat, republican, other) VALUES (?, ?, ?, ?, ?)`;
-        await runAsync(db, sql, [state, electoralVotes[state], "", "", ""]);
+        await runAsync(marketsDb, sql, [state, electoralVotes[state], "", "", ""]);
         if (verbose === true)
             console.log(`Initial info inserted for ${state}`);
     }
 
     // verify elecoral vote data
     await new Promise<void>((resolve, reject) => {
-        db.all(`SELECT * FROM States`, [], (err, rows : Row[]) => {
+        marketsDb.all(`SELECT * FROM States`, [], (err, rows : Row[]) => {
             if (err) {
                 reject(err);
             }
@@ -100,7 +92,7 @@ export async function setupStatesDb(db : Database, verbose : boolean = true) {
         });
     });
 
-    compileTokenIDs(marketsDb);
+    compileTokenIDs();
 }
 
 export async function getStateInfo(state : string) {
