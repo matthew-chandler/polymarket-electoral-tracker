@@ -1,7 +1,7 @@
 import { ClobClient } from "@polymarket/clob-client";
 import sqlite3 from 'sqlite3';
 import { Database } from 'sqlite3';
-import { POLYMARKET_HOST, POLYGON_CHAINID, Row, runAsync, allStates, electoralVotes, marketsDb } from '../common';
+import { POLYMARKET_HOST, POLYGON_CHAINID, StateRow, runAsync, allStates, electoralVotes, marketsDb } from '../common';
 
 const mainPattern = /will-a-[a-z-]+-win-[a-z-]+-presidential-election/;
 const alternatePattern = /will-a-[a-z]+-win-[a-z-]+-in-the-2024-us-presidential-election/;
@@ -74,12 +74,12 @@ export async function setupStatesDb(verbose : boolean = true) {
 
     // verify elecoral vote data
     await new Promise<void>((resolve, reject) => {
-        marketsDb.all(`SELECT * FROM States`, [], (err, rows : Row[]) => {
+        marketsDb.all(`SELECT * FROM States`, [], (err, rows : StateRow[]) => {
             if (err) {
                 reject(err);
             }
             let sum : number = 0;
-            rows.forEach((row : Row) => {
+            rows.forEach((row : StateRow) => {
                 sum += row.votes;
             });
             console.log(`Total electoral votes: ${sum}`);
@@ -96,8 +96,8 @@ export async function setupStatesDb(verbose : boolean = true) {
 }
 
 export async function getStateInfo(state : string) {
-    return new Promise<Row>((resolve, reject) => {
-        marketsDb.get(`SELECT * FROM States WHERE state = ?`, [state], (err, row : Row) => {
+    return new Promise<StateRow>((resolve, reject) => {
+        marketsDb.get(`SELECT * FROM States WHERE state = ?`, [state], (err, row : StateRow) => {
             if (err) {
                 reject(err);
             }
@@ -107,8 +107,8 @@ export async function getStateInfo(state : string) {
 }
 
 export async function getAllStateInfo() {
-    return new Promise<Row[]>((resolve, reject) => {
-        marketsDb.all(`SELECT * FROM States`, [], (err, rows : Row[]) => {
+    return new Promise<StateRow[]>((resolve, reject) => {
+        marketsDb.all(`SELECT * FROM States`, [], (err, rows : StateRow[]) => {
             if (err) {
                 reject(err);
             }

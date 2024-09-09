@@ -17,7 +17,8 @@
     "@types/node": "^22.5.4",
     "@types/sqlite3": "^3.1.11",
     "sqlite3": "^5.1.7",
-    "tslib": "^2.7.0"
+    "tslib": "^2.7.0",
+    "weighted": "^1.0.0"
   },
   "devDependencies": {
     "tsx": "^4.19.0",

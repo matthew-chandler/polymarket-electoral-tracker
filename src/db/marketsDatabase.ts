@@ -1,14 +1,14 @@
 import { ClobClient, BookParams } from "@polymarket/clob-client";
 import sqlite3 from 'sqlite3';
 import { Database } from 'sqlite3';
-import { POLYMARKET_HOST, POLYGON_CHAINID, Row, runAsync, marketsDb } from '../common';
+import { POLYMARKET_HOST, POLYGON_CHAINID, MarketRow, StateRow, runAsync, marketsDb } from '../common';
 import { getAllStateInfo } from "./statesDatabase";
 import { get } from "http";
 
-export async function createMarketTable(db : Database, verbose : boolean = true) {
+export async function createMarketTable(verbose : boolean = true) {
     // create table
     const sql = `CREATE TABLE CurrentMarkets (state, democrat, republican, other)`;
-    await runAsync(db, sql);
+    await runAsync(marketsDb, sql);
 
     if (verbose === true)
         console.log('Table created');
@@ -19,7 +19,7 @@ export async function createMarketTable(db : Database, verbose : boolean = true)
     }
 }
 
-export async function updateMarketTable(db : Database, client : ClobClient, verbose : boolean = true) {
+export async function updateMarketTable(client : ClobClient, verbose : boolean = true) {
     const stateInfo = await getAllStateInfo();
     for (const row of stateInfo) {
         const state : string = row.state;
@@ -34,21 +34,28 @@ export async function updateMarketTable(db : Database, client : ClobClient, verb
           ] as BookParams[]);
 
         const sql = `INSERT INTO CurrentMarkets (state, democrat, republican, other) VALUES (?, ?, ?, ?)`;
-        await runAsync(db, sql, [state, midpoints[democratTokenID], midpoints[republicanTokenID], midpoints[otherTokenID]]);
+        await runAsync(marketsDb, sql, [state, midpoints[democratTokenID], midpoints[republicanTokenID], midpoints[otherTokenID]]);
         if (verbose === true)
             console.log(`Market info inserted for ${state}`);
     }
 }
 
-export async function getStateInfo(state : string) {
-    return new Promise<Row>((resolve, reject) => {
-        marketsDb.get(`SELECT * FROM States WHERE state = ?`, [state], (err, row : Row) => {
+export async function refreshMarketData(client : ClobClient, verbose : boolean = true) {
+    const sql = `DROP TABLE IF EXISTS CurrentMarkets`;
+    await runAsync(marketsDb, sql);
+    if (verbose === true)
+        console.log('Table dropped');
+    await createMarketTable();
+    await updateMarketTable(client);
+}
+
+export async function getCurrentMarketData() {
+    return new Promise<MarketRow[]>((resolve, reject) => {
+        marketsDb.all(`SELECT * FROM CurrentMarkets`, [], (err, rows : MarketRow[]) => {
             if (err) {
                 reject(err);
             }
-            resolve(row);
+            resolve(rows);
         });
     });
 }
-
-updateMarketTable(marketsDb, new ClobClient(POLYMARKET_HOST, POLYGON_CHAINID));
