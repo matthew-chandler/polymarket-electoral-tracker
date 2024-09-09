@@ -9,9 +9,9 @@ export const electoralVotes: {[state : string] : number} = {"1st-maine" : 1, "2n
 export interface Row {
     state: string;
     votes: number;
-    democrat: number;
-    republican: number;
-    other: number;
+    democrat: string;
+    republican: string;
+    other: string;
 }
 
 // Helper function to promisify db.run

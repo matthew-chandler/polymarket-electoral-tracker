@@ -1,4 +1,4 @@
-import { ClobClient } from "@polymarket/clob-client";
+import { ClobClient, BookParams } from "@polymarket/clob-client";
 import sqlite3 from 'sqlite3';
 import { Database } from 'sqlite3';
 import { POLYMARKET_HOST, POLYGON_CHAINID, Row, runAsync, allStates, electoralVotes } from './common';
@@ -6,46 +6,38 @@ import { marketsDb, getAllStateInfo } from "./statesDatabase";
 import { get } from "http";
 
 export async function createMarketTable(db : Database, verbose : boolean = true) {
-    let sql : string;
-
-    const fullCurrentTime = (await fetch("https://worldtimeapi.org/api/ip").then(response => response.json())).datetime;
-    const currentTime = fullCurrentTime.replaceAll("-","").replaceAll(":","").slice(0,15);
-
     // create table
-    // sql = `CREATE TABLE CurrentMarkets (state, democrat, republican, other)`;
-    // await runAsync(db, sql);
-    // console.log('Table created');
+    const sql = `CREATE TABLE CurrentMarkets (state, democrat, republican, other)`;
+    await runAsync(db, sql);
 
-    // sql = `DROP TABLE Markets20240908T230238`
-    // await runAsync(db, sql);
-    // console.log('Table dropped');
+    if (verbose === true)
+        console.log('Table created');
 
     // insert initial state and vote info
     for (const state of await getAllStateInfo()) {
         console.log(state);
     }
+}
 
-    // // verify elecoral vote data
-    // await new Promise<void>((resolve, reject) => {
-    //     db.all(`SELECT * FROM States`, [], (err, rows : Row[]) => {
-    //         if (err) {
-    //             reject(err);
-    //         }
-    //         let sum : number = 0;
-    //         rows.forEach((row : Row) => {
-    //             sum += row.votes;
-    //         });
-    //         console.log(`Total electoral votes: ${sum}`);
-    //         if (sum === 538) {
-    //             console.log("Total electoral votes correct");
-    //         } else {
-    //             console.log("Total electoral votes not correct");
-    //         }
-    //         resolve();
-    //     });
-    // });
+export async function updateMarketTable(db : Database, client : ClobClient, verbose : boolean = true) {
+    const stateInfo = await getAllStateInfo();
+    for (const row of stateInfo) {
+        const state : string = row.state;
+        const democratTokenID : string = row.democrat;
+        const republicanTokenID : string = row.republican;
+        const otherTokenID : string = row.other;
 
-    // compileTokenIDs(marketsDb);
+        const midpoints = await client.getMidpoints([
+            { token_id: democratTokenID, side : "BUY" },
+            { token_id: republicanTokenID, side : "BUY" },
+            { token_id: otherTokenID, side : "BUY" }
+          ] as BookParams[]);
+
+        const sql = `INSERT INTO CurrentMarkets (state, democrat, republican, other) VALUES (?, ?, ?, ?)`;
+        await runAsync(db, sql, [state, midpoints[democratTokenID], midpoints[republicanTokenID], midpoints[otherTokenID]]);
+        if (verbose === true)
+            console.log(`Market info inserted for ${state}`);
+    }
 }
 
 export async function getStateInfo(state : string) {
@@ -59,4 +51,4 @@ export async function getStateInfo(state : string) {
     });
 }
 
-createMarketTable(marketsDb);
+updateMarketTable(marketsDb, new ClobClient(POLYMARKET_HOST, POLYGON_CHAINID));

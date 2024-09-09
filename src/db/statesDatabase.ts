@@ -75,7 +75,7 @@ export async function setupStatesDb(db : Database, verbose : boolean = true) {
     // insert initial state and vote info
     for (const state in electoralVotes) {
         const sql : string = `INSERT INTO States (state, votes, democrat, republican, other) VALUES (?, ?, ?, ?, ?)`;
-        await runAsync(db, sql, [state, electoralVotes[state], 0, 0, 0]);
+        await runAsync(db, sql, [state, electoralVotes[state], "", "", ""]);
         if (verbose === true)
             console.log(`Initial info inserted for ${state}`);
     }
