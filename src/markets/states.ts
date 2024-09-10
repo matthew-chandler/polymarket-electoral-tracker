@@ -1,6 +1,4 @@
 import { ClobClient } from "@polymarket/clob-client";
-import sqlite3 from 'sqlite3';
-import { Database } from 'sqlite3';
 import { POLYMARKET_HOST, POLYGON_CHAINID, StateRow, runAsync, allStates, electoralVotes, marketsDb } from '../common';
 
 const mainPattern = /will-a-[a-z-]+-win-[a-z-]+-presidential-election/;
