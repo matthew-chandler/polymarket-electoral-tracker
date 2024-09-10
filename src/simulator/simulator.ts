@@ -1,5 +1,5 @@
 import { electoralVotes, MarketRow } from '../common';
-import { getCurrentMarketData } from '../db/marketsDatabase';
+import { getCurrentMarketData } from '../markets/marketsDatabase';
 import * as weighted from 'weighted';
 
 const NUM_ITERATIONS = 1000000;
