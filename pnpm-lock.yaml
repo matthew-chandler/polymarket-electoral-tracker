@@ -31,8 +31,8 @@ importers:
         version: 1.0.0
     devDependencies:
       tsx:
-        specifier: ^4.19.0
-        version: 4.19.0
+        specifier: ^4.19.1
+        version: 4.19.1
       typescript:
         specifier: ^5.5.4
         version: 5.5.4
@@ -534,8 +534,8 @@ packages:
     engines: {node: ^12.13.0 || ^14.15.0 || >=16.0.0}
     deprecated: This package is no longer supported.
 
-  get-tsconfig@4.8.0:
-    resolution: {integrity: sha512-Pgba6TExTZ0FJAn1qkJAjIeKoDJ3CsI2ChuLohJnZl/tTU8MVrq3b+2t5UOPfRa4RMsorClBjJALkJUMjG1PAw==}
+  get-tsconfig@4.8.1:
+    resolution: {integrity: sha512-k9PN+cFBmaLWtVz29SkUoqU5O0slLuHJXt/2P+tMVFT+phsSGXGkp9t3rQIqdz0e+06EHNGs3oM6ZX1s2zHxRg==}
 
   github-from-package@0.0.0:
     resolution: {integrity: sha512-SyHy3T1v2NUXn29OsWdxmK6RwHD+vkj3v8en8AOBZ1wBQ/hCAQ5bAQTD02kW4W9tUp/3Qh6J8r9EvntiyCmOOw==}
@@ -861,8 +861,8 @@ packages:
   tslib@2.7.0:
     resolution: {integrity: sha512-gLXCKdN1/j47AiHiOkJN69hJmcbGTHI0ImLmbYLHykhgeN0jVGola9yVjFgzCUklsZQMW55o+dW7IXv3RCXDzA==}
 
-  tsx@4.19.0:
-    resolution: {integrity: sha512-bV30kM7bsLZKZIOCHeMNVMJ32/LuJzLVajkQI/qf92J2Qr08ueLQvW00PUZGiuLPP760UINwupgUj8qrSCPUKg==}
+  tsx@4.19.1:
+    resolution: {integrity: sha512-0flMz1lh74BR4wOvBjuh9olbnwqCPc35OOlfyzHba0Dc+QNUeWX/Gq2YTbnwcWPO3BMd8fkzRVrHcsR+a7z7rA==}
     engines: {node: '>=18.0.0'}
     hasBin: true
 
@@ -1614,7 +1614,7 @@ snapshots:
       wide-align: 1.1.5
     optional: true
 
-  get-tsconfig@4.8.0:
+  get-tsconfig@4.8.1:
     dependencies:
       resolve-pkg-maps: 1.0.0
 
@@ -2030,10 +2030,10 @@ snapshots:
 
   tslib@2.7.0: {}
 
-  tsx@4.19.0:
+  tsx@4.19.1:
     dependencies:
       esbuild: 0.23.1
-      get-tsconfig: 4.8.0
+      get-tsconfig: 4.8.1
     optionalDependencies:
       fsevents: 2.3.3
 

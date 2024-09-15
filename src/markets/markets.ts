@@ -2,6 +2,7 @@ import { ClobClient, BookParams } from "@polymarket/clob-client";
 import { MarketRow, runAsync, marketsDb } from '../common';
 import { getAllStateInfo } from "./states";
 
+// creates CurrentMarkets table
 export async function createMarketTable(verbose : boolean = true) {
     // create table
     const sql = `CREATE TABLE CurrentMarkets (state, democrat, republican, other)`;
@@ -16,6 +17,16 @@ export async function createMarketTable(verbose : boolean = true) {
     }
 }
 
+export async function createArchiveTable(verbose : boolean = true) {
+    // create table
+    const sql = `CREATE TABLE MarketArchive (state, democrat, republican, other, timestamp)`;
+    await runAsync(marketsDb, sql);
+
+    if (verbose === true)
+        console.log('Table created');
+}
+
+// updates CurrentMarkets table with current market data
 export async function updateMarketTable(client : ClobClient, verbose : boolean = true) {
     const stateInfo = await getAllStateInfo();
     for (const row of stateInfo) {
@@ -37,7 +48,8 @@ export async function updateMarketTable(client : ClobClient, verbose : boolean =
     }
 }
 
-export async function refreshMarketData(client : ClobClient, verbose : boolean = true) {
+// deletes and recreates CurrentMarkets table
+export async function recreateMarketTable(client : ClobClient, verbose : boolean = true) {
     const sql = `DROP TABLE IF EXISTS CurrentMarkets`;
     await runAsync(marketsDb, sql);
     if (verbose === true)
@@ -46,6 +58,7 @@ export async function refreshMarketData(client : ClobClient, verbose : boolean =
     await updateMarketTable(client);
 }
 
+// retreives current market data from database
 export async function getCurrentMarketData() {
     return new Promise<MarketRow[]>((resolve, reject) => {
         marketsDb.all(`SELECT * FROM CurrentMarkets`, [], (err, rows : MarketRow[]) => {
